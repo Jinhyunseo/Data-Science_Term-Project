@@ -1,7 +1,6 @@
 import os
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.neighbors import KNeighborsClassifier
@@ -15,37 +14,32 @@ warnings.filterwarnings('ignore')
 
 # LOAD PREPROCESSED DATA
 print("=" * 60)
-print("STEP 1. LOAD PREPROCESSED DATA")
+print("LOAD PREPROCESSED DATA")
 print("=" * 60)
 
-# Load the preprocessed dataset from the preprocessing team
 df = pd.read_csv("EV_preprocessed_standard.csv")
 print(f"Data shape: {df.shape[0]} rows x {df.shape[1]} columns")
 
 
-# CREATE TARGET LABEL (BEV / PHEV)
+# DEFINE TARGET LABEL (BEV / PHEV)
 print("\n" + "=" * 60)
-print("STEP 2. CREATE TARGET LABEL")
+print("DEFINE TARGET LABEL")
 print("=" * 60)
 
-# Check if Electric Vehicle Type was one-hot encoded during preprocessing
-ev_type_cols = [c for c in df.columns if 'Electric Vehicle Type' in c or 'EV_Type' in c]
-print(f"EV Type related columns: {ev_type_cols}")
+# We use the BEV column directly as our binary target
+# True = BEV (Battery Electric Vehicle)
+# False = PHEV (Plug-in Hybrid Electric Vehicle)
+y = df['Electric Vehicle Type_Battery Electric Vehicle (BEV)']
 
-# Use Electric Range to determine vehicle type
-# BEVs (Battery Electric Vehicles) have a non-zero electric range
-# PHEVs (Plug-in Hybrid Electric Vehicles) are recorded as 0 in this dataset
-df['EV_Label'] = df['Electric Range'].apply(lambda x: 'BEV' if x > 0 else 'PHEV')
-
-print("\n[Target Label Distribution]")
-print(df['EV_Label'].value_counts())
+print("[Target Label Distribution]")
+print(y.value_counts().rename({True: 'BEV', False: 'PHEV'}))
 print("\n[Target Label Ratio]")
-print(df['EV_Label'].value_counts(normalize=True).map('{:.1%}'.format))
+print(y.value_counts(normalize=True).rename({True: 'BEV', False: 'PHEV'}).map('{:.1%}'.format))
 
-# Visualize class distribution to check for imbalance
+# Visualize class distribution
 fig, ax = plt.subplots(figsize=(6, 4))
-counts = df['EV_Label'].value_counts()
-bars = ax.bar(counts.index, counts.values,
+counts = y.value_counts()
+bars = ax.bar(['BEV', 'PHEV'], counts.values,
               color=['steelblue', 'salmon'], edgecolor='white')
 ax.set_title('BEV vs PHEV Distribution')
 ax.set_ylabel('Count')
@@ -59,33 +53,28 @@ for bar, val in zip(bars, counts.values):
 # ha='center': Ensures the string alignment is centered
 plt.tight_layout()
 plt.savefig('bev_phev_distribution.png', dpi=150)
-# savefig: save the graph drawn from Matplotlib to Image
 plt.show()
 print("→ 'bev_phev_distribution.png' saved")
 
 
-# PREPARE X, y
+# PREPARE X
 print("\n" + "=" * 60)
-print("STEP 3. PREPARE X, y")
+print("PREPARE X")
 print("=" * 60)
 
-y = df['EV_Label']
-
-# Several columns need to be excluded before training
-# 1. Make and Model: directly reveal the vehicle type (e.g. Tesla is always BEV)
-# 2. Electric Range: used to create lable
-# 3. One-hot encoded EV Type columns: label
-# 4. CAFV Eligibility: data leak
-drop_for_X = ['Make', 'Model', 'Electric Range', 'EV_Label']
-drop_for_X += ev_type_cols
-
-cafv_cols = [c for c in df.columns if 'CAFV' in c or 'Eligibility' in c or 'Fuel Vehicle' in c]
-drop_for_X += cafv_cols
+# Columns to exclude:
+# Make, Model: knowing the brand already reveals the type (e.g. Tesla = always BEV)
+# Electric Range: directly correlated with vehicle type, would leak the answer
+# Electric Vehicle Type (both one-hot cols): these ARE the label
+# CAFV Eligibility: determined by battery range, indirectly leaks BEV/PHEV info
+ev_type_cols = [c for c in df.columns if 'Electric Vehicle Type' in c]
+cafv_cols = [c for c in df.columns if 'Eligibility' in c]
+drop_for_X = ['Make', 'Model', 'Electric Range'] + ev_type_cols + cafv_cols
 drop_for_X = [c for c in drop_for_X if c in df.columns]
 
 X = df.drop(columns=drop_for_X)
 
-print(f"Dropped columns (answer-leaking): {drop_for_X}")
+print(f"Dropped columns : {drop_for_X}")
 print(f"\nX shape: {X.shape}")
 print(f"y shape: {y.shape}")
 print(f"\nFeatures used for training:")
@@ -93,18 +82,16 @@ for col in X.columns:
     print(f"  - {col}")
 
 
-# CLASSIFICATION
+# CLASSIFICATION WITH K-FOLD CROSS VALIDATION
 print("\n" + "=" * 60)
 print("STEP 4. CLASSIFICATION WITH K-FOLD CROSS VALIDATION")
 print("=" * 60)
 
-# Using 5-fold CV instead of a single train/test split
-# to get a more reliable estimate of model performance
+# 5-fold CV gives a more reliable performance estimate than a single split
 kf = KFold(n_splits=5, shuffle=True, random_state=42)
 
-# Three classifiers are compared
-# SVM was considered but ruled out because training on 270k+ rows
-# takes an unreasonably long time; Logistic Regression is used instead
+# SVM was ruled out due to excessive training time on 270k+ rows
+# Logistic Regression is used as a faster linear baseline instead
 models = {
     'KNN (k=5)'          : KNeighborsClassifier(n_neighbors=5),
     'Decision Tree'      : DecisionTreeClassifier(random_state=42),
@@ -134,11 +121,14 @@ for ax, (name, model) in zip(axes, models.items()):
     # so every sample gets predicted exactly once without data leakage
     y_pred = cross_val_predict(model, X, y, cv=kf)
 
-    print(f"\n[{name}] Classification Report")
-    print(classification_report(y, y_pred))
+    # Convert True/False back to BEV/PHEV for readability
+    y_display = y.map({True: 'BEV', False: 'PHEV'})
+    y_pred_display = ['BEV' if p else 'PHEV' for p in y_pred]
 
-    # Confusion matrix shows how many BEVs and PHEVs were correctly/incorrectly classified
-    cm = confusion_matrix(y, y_pred, labels=['BEV', 'PHEV'])
+    print(f"\n[{name}] Classification Report")
+    print(classification_report(y_display, y_pred_display))
+
+    cm = confusion_matrix(y_display, y_pred_display, labels=['BEV', 'PHEV'])
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                 xticklabels=['BEV', 'PHEV'],
                 yticklabels=['BEV', 'PHEV'],
@@ -175,7 +165,7 @@ ax.boxplot(results.values(), labels=results.keys(), patch_artist=True,
 # - results.values() & results.keys(): Extracts the data values and maps them to their corresponding dictionary keys
 # - patch_artist=True: converts so it can be filled with color.
 # - boxprops=dict(facecolor='lightblue'): Passes a dictionary of properties to style the box
-#   'facecolor': fills the interior with a light blue color
+#   'facecolor': fills the interior with a light blue colo
 ax.set_title('Model Accuracy Comparison (5-Fold CV)')
 ax.set_ylabel('Accuracy')
 ax.set_ylim(0, 1)
@@ -191,11 +181,12 @@ print("\n" + "=" * 60)
 print("CLASSIFICATION COMPLETE — SUMMARY")
 print("=" * 60)
 print(f"  Dataset       : {len(df)} rows")
-print(f"  Target        : EV_Label (BEV / PHEV)")
+print(f"  Target        : BEV (True) / PHEV (False)")
 print(f"  Features      : {X.shape[1]} columns")
-print(f"  Excluded      : Make, Model, Electric Range (answer-leaking)")
-print(f"                  EV Type columns (answer itself)")
-print(f"                  CAFV columns (indirect answer-leaking)")
+print(f"  Excluded      : Make, Model (brand leakage)")
+print(f"                  Electric Range (answer leakage)")
+print(f"                  EV Type columns (label itself)")
+print(f"                  CAFV columns (indirect leakage)")
 print(f"  Evaluation    : 5-Fold Cross Validation")
 print(f"  Models tested : {', '.join(models.keys())}")
 print(f"  Best Model    : {best_model} (Accuracy: {means[best_model]:.4f})")
