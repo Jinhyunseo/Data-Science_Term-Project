@@ -13,31 +13,28 @@ import warnings
 warnings.filterwarnings('ignore')
 
 
-# ============================================================
-# STEP 1. LOAD PREPROCESSED DATA
-# ============================================================
+# LOAD PREPROCESSED DATA
 print("=" * 60)
 print("STEP 1. LOAD PREPROCESSED DATA")
 print("=" * 60)
 
+# Load the preprocessed dataset from the preprocessing team
 df = pd.read_csv("EV_preprocessed_standard.csv")
 print(f"Data shape: {df.shape[0]} rows x {df.shape[1]} columns")
 
 
-# ============================================================
-# STEP 2. CREATE TARGET LABEL (BEV / PHEV)
-# ============================================================
+# CREATE TARGET LABEL (BEV / PHEV)
 print("\n" + "=" * 60)
 print("STEP 2. CREATE TARGET LABEL")
 print("=" * 60)
 
-# One-Hot 인코딩된 경우 컬럼명 확인
+# Check if Electric Vehicle Type was one-hot encoded during preprocessing
 ev_type_cols = [c for c in df.columns if 'Electric Vehicle Type' in c or 'EV_Type' in c]
 print(f"EV Type related columns: {ev_type_cols}")
 
-# Electric Range로 BEV/PHEV 구분
-# BEV: Electric Range > 0
-# PHEV: Electric Range == 0
+# Use Electric Range to determine vehicle type
+# BEVs (Battery Electric Vehicles) have a non-zero electric range
+# PHEVs (Plug-in Hybrid Electric Vehicles) are recorded as 0 in this dataset
 df['EV_Label'] = df['Electric Range'].apply(lambda x: 'BEV' if x > 0 else 'PHEV')
 
 print("\n[Target Label Distribution]")
@@ -45,7 +42,7 @@ print(df['EV_Label'].value_counts())
 print("\n[Target Label Ratio]")
 print(df['EV_Label'].value_counts(normalize=True).map('{:.1%}'.format))
 
-# 분포 시각화
+# Visualize class distribution to check for imbalance
 fig, ax = plt.subplots(figsize=(6, 4))
 counts = df['EV_Label'].value_counts()
 bars = ax.bar(counts.index, counts.values,
@@ -61,21 +58,18 @@ plt.show()
 print("→ 'bev_phev_distribution.png' saved")
 
 
-# ============================================================
-# STEP 3. PREPARE X, y
-# ============================================================
+# PREPARE X, y
 print("\n" + "=" * 60)
 print("STEP 3. PREPARE X, y")
 print("=" * 60)
 
-# y: BEV / PHEV 라벨
 y = df['EV_Label']
 
-# X에서 제거할 컬럼들
-# 1) 브랜드/모델명 치트키 방지
-# 2) Electric Range → 답을 직접 포함
-# 3) EV Type One-Hot 컬럼 → 답 그 자체
-# 4) CAFV 컬럼 → 배터리 주행거리 기반이라 BEV/PHEV 간접적으로 노출
+# Several columns need to be excluded before training
+# 1. Make and Model: directly reveal the vehicle type (e.g. Tesla is always BEV)
+# 2. Electric Range: used to create lable
+# 3. One-hot encoded EV Type columns: label
+# 4. CAFV Eligibility: data leak
 drop_for_X = ['Make', 'Model', 'Electric Range', 'EV_Label']
 drop_for_X += ev_type_cols
 
@@ -93,19 +87,18 @@ for col in X.columns:
     print(f"  - {col}")
 
 
-# ============================================================
-# STEP 4. CLASSIFICATION WITH K-FOLD CROSS VALIDATION
-# ============================================================
+# CLASSIFICATION
 print("\n" + "=" * 60)
 print("STEP 4. CLASSIFICATION WITH K-FOLD CROSS VALIDATION")
 print("=" * 60)
 
-# K-Fold 설정 (k=5)
+# Using 5-fold CV instead of a single train/test split
+# to get a more reliable estimate of model performance
 kf = KFold(n_splits=5, shuffle=True, random_state=42)
 
-# 사용할 모델들 (수업에서 배운 것만)
-# ※ SVM → 데이터 27만개에서 학습 시간 과도하게 소요
-#          Logistic Regression으로 대체
+# Three classifiers are compared
+# SVM was considered but ruled out because training on 270k+ rows
+# takes an unreasonably long time; Logistic Regression is used instead
 models = {
     'KNN (k=5)'          : KNeighborsClassifier(n_neighbors=5),
     'Decision Tree'      : DecisionTreeClassifier(random_state=42),
@@ -115,7 +108,7 @@ models = {
 results = {}
 
 for name, model in models.items():
-    print(f"\n[{name}] 학습 중...")
+    print(f"\n[{name}] Training...")
     scores = cross_val_score(model, X, y, cv=kf, scoring='accuracy')
     results[name] = scores
     print(f"  Fold Scores : {scores.round(4)}")
@@ -123,9 +116,7 @@ for name, model in models.items():
     print(f"  Std         : {scores.std():.4f}")
 
 
-# ============================================================
-# STEP 5. EVALUATION - CONFUSION MATRIX & CLASSIFICATION REPORT
-# ============================================================
+# EVALUATION
 print("\n" + "=" * 60)
 print("STEP 5. DETAILED EVALUATION")
 print("=" * 60)
@@ -133,11 +124,14 @@ print("=" * 60)
 fig, axes = plt.subplots(1, len(models), figsize=(6 * len(models), 5))
 
 for ax, (name, model) in zip(axes, models.items()):
+    # cross_val_predict collects out-of-fold predictions across all 5 folds
+    # so every sample gets predicted exactly once without data leakage
     y_pred = cross_val_predict(model, X, y, cv=kf)
 
     print(f"\n[{name}] Classification Report")
     print(classification_report(y, y_pred))
 
+    # Confusion matrix shows how many BEVs and PHEVs were correctly/incorrectly classified
     cm = confusion_matrix(y, y_pred, labels=['BEV', 'PHEV'])
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
                 xticklabels=['BEV', 'PHEV'],
@@ -153,9 +147,7 @@ plt.show()
 print("→ 'confusion_matrices.png' saved")
 
 
-# ============================================================
-# STEP 6. MODEL COMPARISON
-# ============================================================
+# MODEL COMPARISON
 print("\n" + "=" * 60)
 print("STEP 6. MODEL COMPARISON")
 print("=" * 60)
@@ -170,7 +162,7 @@ for name, scores in results.items():
 
 print(f"\n★ Best Model: {best_model} (Accuracy: {means[best_model]:.4f})")
 
-# 모델 비교 박스플롯
+# Boxplot shows both average accuracy and variance across folds for each model
 fig, ax = plt.subplots(figsize=(8, 5))
 ax.boxplot(results.values(), labels=results.keys(), patch_artist=True,
            boxprops=dict(facecolor='lightblue'))
@@ -184,9 +176,7 @@ plt.show()
 print("→ 'model_comparison.png' saved")
 
 
-# ============================================================
 # SUMMARY
-# ============================================================
 print("\n" + "=" * 60)
 print("CLASSIFICATION COMPLETE — SUMMARY")
 print("=" * 60)
