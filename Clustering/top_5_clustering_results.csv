@@ -1,0 +1,6 @@
+Algorithm,n_clusters (K),Silhouette_Score,Inertia_Display
+KMeans (k-means++),2,0.7997,226.96
+KMeans (random),2,0.7996,226.96
+Agglomerative (Average),2,0.7941,-
+Agglomerative (Complete),2,0.7941,-
+Agglomerative (Complete),3,0.7885,-
