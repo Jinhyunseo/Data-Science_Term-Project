@@ -52,8 +52,14 @@ ax.set_ylabel('Count')
 for bar, val in zip(bars, counts.values):
     ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 500,
             f'{val:,}', ha='center', fontsize=11)
+# ax.text: Places a text string at specific coordinates.
+# bar.get_x() [left edge] + bar.get_width()/2 [half width]: centers the text
+# bar.get_height() [top edge] + 500: adds a padding of 500 units 
+# f'{val:,}': Formats the integer with thousands separators
+# ha='center': Ensures the string alignment is centered
 plt.tight_layout()
 plt.savefig('bev_phev_distribution.png', dpi=150)
+# savefig: save the graph drawn from Matplotlib to Image
 plt.show()
 print("→ 'bev_phev_distribution.png' saved")
 
@@ -166,6 +172,10 @@ print(f"\n★ Best Model: {best_model} (Accuracy: {means[best_model]:.4f})")
 fig, ax = plt.subplots(figsize=(8, 5))
 ax.boxplot(results.values(), labels=results.keys(), patch_artist=True,
            boxprops=dict(facecolor='lightblue'))
+# - results.values() & results.keys(): Extracts the data values and maps them to their corresponding dictionary keys
+# - patch_artist=True: converts so it can be filled with color.
+# - boxprops=dict(facecolor='lightblue'): Passes a dictionary of properties to style the box
+#   'facecolor': fills the interior with a light blue color
 ax.set_title('Model Accuracy Comparison (5-Fold CV)')
 ax.set_ylabel('Accuracy')
 ax.set_ylim(0, 1)
